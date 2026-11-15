@@ -194,16 +194,16 @@ def daily_task(call):
     last_time = data[0]
     current_time = int(time.time())
     
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+
     if current_time - last_time < 86400:
         remaining_seconds = 86400 - (current_time - last_time)
         hours = remaining_seconds // 3600
         minutes = (remaining_seconds % 3600) // 60
         
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
-            
         text = (
             f"✅ <b>Задание выполнено!</b>\n\n"
             f"Ты уже получил очко за сегодня.\n"
@@ -212,15 +212,8 @@ def daily_task(call):
         bot.send_message(call.message.chat.id, text, parse_mode='HTML', reply_markup=get_main_menu())
         return
         
-    execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (current_time, user_id))
-    
     words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
     task_word = random.choice(words)
-    
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
         
     text = (
         f"📜 <b>Твоё задание на сегодня:</b>\n\n"
@@ -230,7 +223,7 @@ def daily_task(call):
     )
     bot.send_message(call.message.chat.id, text, parse_mode='HTML', reply_markup=get_main_menu())
 
-# ИСПРАВЛЕННЫЙ ОБРАБОТЧИК (с защитой от спама)
+# ОБРАБОТЧИК ЧАТА (теперь корректный)
 @bot.message_handler(func=lambda message: True)
 def check_task_word(message):
     if message.chat.type in ['group', 'supergroup']:
@@ -240,7 +233,6 @@ def check_task_word(message):
             
         text = message.text.upper().strip()
         
-        # Берем время последнего выполнения задания
         user_data = execute_query("SELECT last_task_time FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         if not user_data:
             return 
@@ -251,17 +243,15 @@ def check_task_word(message):
         words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
         
         if text in words:
-            # Если прошло МЕНЬШЕ 24 часов - удаляем сообщение и ничего не даем
+            # Если прошло меньше 24 часов, просто удаляем и выходим
             if current_time - last_task_time < 86400:
                 try:
                     bot.delete_message(message.chat.id, message.message_id)
                 except:
                     pass
-                # Можно раскомментировать строку ниже, если хочешь чтобы бот ругался в чате
-                # bot.send_message(message.chat.id, f"⚠️ @{message.from_user.username}, ты уже выполнял задание сегодня!")
                 return
 
-            # Если прошло больше 24 часов - начисляем очко
+            # Если прошло больше - начисляем очко
             execute_query("UPDATE users SET invites_count = invites_count + 1 WHERE telegram_id = ?", (user_id,))
             now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
             execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (user_id, 1, f"Задание дня: {text}", now_str))
@@ -273,7 +263,7 @@ def check_task_word(message):
                 
             bot.send_message(message.chat.id, f"✅ @{message.from_user.username}, задание выполнено! Тебе начислено 1 очко за слово {text}.")
             
-            # Обновляем время выполнения
+            # Записываем время выполнения ТОЛЬКО ЗДЕСЬ
             execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (current_time, user_id))
 
 @bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
