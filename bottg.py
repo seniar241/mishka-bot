@@ -8,9 +8,6 @@ import time
 import random
 from datetime import datetime
 
-# Если ты запускаешь на Railway, эта строка не нужна
-# load_dotenv(dotenv_path='config.env')
-
 API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 bot = telebot.TeleBot(API_TOKEN, skip_pending=True)
 
@@ -63,17 +60,6 @@ def init_db():
 
 init_db()
 
-# Функция для получения уровня
-def get_level(points):
-    if points < 5:
-        return "🥉 Новичок", 5
-    elif points < 15:
-        return "🥈 Охотник", 15
-    elif points < 30:
-        return "🥇 Гроза Мишек", 30
-    else:
-        return "👑 Легенда", 999999 # Максимальный уровень
-
 def check_subscriptions(user_id):
     for channel in REQUIRED_CHANNELS:
         if not is_subscribed(user_id, channel):
@@ -94,7 +80,7 @@ def get_main_menu():
     btn_link = InlineKeyboardButton("🔗 Моя ссылка", callback_data="show_link")
     btn_bonus = InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="daily_bonus")
     btn_refs = InlineKeyboardButton("👥 Мои рефералы", callback_data="my_referrals")
-    btn_task = InlineKeyboardButton("📜 Задание дня", callback_data="daily_task") # НОВАЯ КНОПКА
+    btn_task = InlineKeyboardButton("📜 Задание дня", callback_data="daily_task")
     
     markup.add(btn_top, btn_profile)
     markup.add(btn_link, btn_bonus)
@@ -194,7 +180,6 @@ def participate(call):
     else:
         bot.answer_callback_query(call.id, text='Ты уже участвуешь!', show_alert=True)
 
-# НОВАЯ ФУНКЦИЯ: Задание дня
 @bot.callback_query_handler(func=lambda call: call.data == "daily_task")
 def daily_task(call):
     user_id = call.from_user.id
@@ -207,11 +192,9 @@ def daily_task(call):
     last_time = data[0]
     current_time = int(time.time())
     
-    # Задание доступно раз в 24 часа
     if current_time - last_time >= 86400:
         execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (current_time, user_id))
         
-        # Генерируем слово для задания (можно менять)
         words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
         task_word = random.choice(words)
         
@@ -233,14 +216,15 @@ def daily_task(call):
 def check_task_word(message):
     if message.chat.type in ['group', 'supergroup']:
         user_id = message.from_user.id
+        if not message.text:
+            return
+            
         text = message.text.upper().strip()
         
-        # Проверяем, есть ли пользователь в базе
         user = execute_query("SELECT last_task_time FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         if not user:
-            return # Если нет в базе, игнорируем
+            return 
             
-        # Список слов (должен совпадать с тем, что в функции daily_task)
         words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
         
         if text in words:
@@ -261,7 +245,7 @@ def check_task_word(message):
             # Обнуляем таймер задания (чтобы нельзя было спамить)
             execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (int(time.time()), user_id))
 
-# ОБНОВЛЕННЫЙ БОНУС С РАНДОМОМ
+# БОНУС С РАНДОМОМ
 @bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
 def daily_bonus(call):
     user_id = call.from_user.id
@@ -347,7 +331,6 @@ def show_my_referrals(call):
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                           text=text, parse_mode='HTML', reply_markup=markup)
 
-# ОБНОВЛЕННЫЙ ПРОФИЛЬ (с уровнями)
 @bot.callback_query_handler(func=lambda call: call.data == "show_profile")
 def show_profile(call):
     user_id = call.from_user.id
@@ -357,7 +340,6 @@ def show_profile(call):
         return
         
     invites, last_bonus = data
-    level_name, next_level_pts = get_level(invites)
     
     rank_data = execute_query("SELECT COUNT(*) FROM users WHERE invites_count > ?", (invites,)).fetchone()
     rank = rank_data[0] + 1 if invites > 0 else "—"
@@ -371,16 +353,8 @@ def show_profile(call):
 
     profile_text = (
         f"👤 <b>Твой профиль</b>\n\n"
-        f"🎖 <b>Уровень:</b> {level_name}\n"
-        f"🐻 <b>Очки:</b> {invites}"
-    )
-    
-    # Если до следующего уровня не 999999 (т.е. не легенда)
-    if next_level_pts != 999999:
-        profile_text += f" (до след. уровня: {next_level_pts - invites})"
-        
-    profile_text += (
-        f"\n🏆 <b>Место в топе:</b> {rank}\n"
+        f"🐻 <b>Очки:</b> {invites}\n"
+        f"🏆 <b>Место в топе:</b> {rank}\n"
         f"🎁 <b>Ежедневный бонус:</b> {bonus_status}\n\n"
         f"Чтобы получить ссылку, нажми кнопку «Моя ссылка»."
     )
@@ -428,7 +402,6 @@ def back_to_menu(call):
                           text=get_active_user_text(), parse_mode='HTML', reply_markup=get_main_menu())
 
 # ================= АДМИН-КОМАНДЫ =================
-# (Остались без изменений)
 
 @bot.message_handler(commands=['add_points'])
 def add_points(message):
@@ -448,10 +421,6 @@ def add_points(message):
     now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (target_id, points_to_add, "Ручное начисление админом", now_str))
     bot.send_message(message.chat.id, f"✅ Пользователю {target_id} начислено {points_to_add} очк.")
-    try:
-        bot.send_message(target_id, f"🎁 Администратор начислил тебе {points_to_add} очк.!")
-    except:
-        pass
 
 @bot.message_handler(commands=['remove_points'])
 def remove_points(message):
