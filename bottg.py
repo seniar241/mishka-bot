@@ -198,7 +198,7 @@ def daily_task(call):
         words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
         task_word = random.choice(words)
         
-                text = (
+        text = (
             f"📜 <b>Твоё задание на сегодня:</b>\n\n"
             f"Перейди в наш чат: <a href='https://t.me/aaxf566'>@aaxf566</a>\n"
             f"И напиши там слово: <code>{task_word}</code>\n\n"
@@ -212,7 +212,6 @@ def daily_task(call):
         minutes = (remaining_seconds % 3600) // 60
         bot.answer_callback_query(call.id, text=f"⏳ Новое задание будет через {hours} ч. {minutes} мин.", show_alert=True)
 
-# Обработчик сообщений в чате (для выполнения задания)
 @bot.message_handler(func=lambda message: True)
 def check_task_word(message):
     if message.chat.type in ['group', 'supergroup']:
@@ -229,24 +228,19 @@ def check_task_word(message):
         words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
         
         if text in words:
-            # Даем очко за слово
             execute_query("UPDATE users SET invites_count = invites_count + 1 WHERE telegram_id = ?", (user_id,))
             now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
             execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (user_id, 1, f"Задание дня: {text}", now_str))
             
-            # Удаляем сообщение, чтобы не спамили
             try:
                 bot.delete_message(message.chat.id, message.message_id)
             except:
                 pass
                 
-            # Отправляем уведомление
             bot.send_message(message.chat.id, f"✅ @{message.from_user.username}, задание выполнено! Тебе начислено 1 очко за слово {text}.")
             
-            # Обнуляем таймер задания (чтобы нельзя было спамить)
             execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (int(time.time()), user_id))
 
-# БОНУС С РАНДОМОМ
 @bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
 def daily_bonus(call):
     user_id = call.from_user.id
