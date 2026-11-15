@@ -15,8 +15,7 @@ API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 bot = telebot.TeleBot(API_TOKEN, skip_pending=True)
 
 ADMIN_USERNAMES = ['seniartys']
-# СЮДА ВПИШИ СВОИ КАНАЛЫ/ЧАТЫ
-REQUIRED_CHANNELS = ['@aaxf566'] 
+REQUIRED_CHANNELS = ['@aaxf566'] # СЮДА ВПИШИ СВОИ КАНАЛЫ
 BOT_USERNAME = 'refkafchat_bot'
 MAX_WINNERS = 1
 
@@ -96,7 +95,7 @@ def get_welcome_text():
         f'<b>Как это работает:</b>\n'
         f'1️⃣ Приглашай друзей по своей личной ссылке.\n'
         f'2️⃣ Получай <b>1 очко</b> за каждого, кто зайдёт.\n'
-        f'3️⃣ Заходи каждый день и забирай <b>ежедневный бонус</b>.\n'
+        f'3️⃣ Заходи каждый день и забирай <b>ежедневный бонус</b> (может выпасть до 5 очков!).\n'
         f'4️⃣ Кто наберёт больше всех очков — тот и уносит мишку! 🏆\n\n'
         f'⚠️ <b>Внимание!</b> Чтобы начать, тебе нужно подписаться на группу:\n'
         f'🔗 <a href="https://t.me/aaxf566">@aaxf566</a>\n\n'
@@ -115,7 +114,6 @@ def start(message):
     user_id = message.from_user.id
     user_data = execute_query("SELECT particip FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
 
-    # Если пользователь уже есть в базе
     if user_data:
         if user_data[0] == 1: 
             bot.send_message(message.chat.id, get_active_user_text(), parse_mode='HTML', reply_markup=get_main_menu())
@@ -123,28 +121,21 @@ def start(message):
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton(text="🎉 Участвовать", callback_data="participate"))
             bot.send_message(message.chat.id, get_welcome_text(), parse_mode='HTML', reply_markup=markup)
-    
-    # Если это новый пользователь
     else:
         args = message.text.split()
         referral_link = f'{user_id}'
         inviter_id = None
 
-        # Обработка реферальной ссылки
         if len(args) > 1:
             ref_code = args[1]
             inviter = execute_query("SELECT telegram_id FROM users WHERE referral_code = ?", (ref_code,)).fetchone()
             if inviter:
                 inviter_id = inviter[0]
                 execute_query("UPDATE users SET invites_count = invites_count + 1 WHERE telegram_id = ?", (inviter_id,))
-                
                 now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
                 invited_username = message.from_user.username or "Нет юзернейма"
                 
-                # Запись в историю рефералов
                 execute_query("INSERT INTO referral_history (inviter_id, invited_id, invited_username, join_time) VALUES (?, ?, ?, ?)", (inviter_id, user_id, invited_username, now_str))
-                
-                # Запись в историю очков
                 reason_text = f"Реферал @{invited_username} (ID: {user_id})"
                 execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (inviter_id, 1, reason_text, now_str))
                 
@@ -153,10 +144,8 @@ def start(message):
                 except:
                     pass
 
-        # Регистрируем нового пользователя
         execute_query("INSERT INTO users (telegram_id, referral_code, inviter, invites_count, last_bonus_time) VALUES (?, ?, ?, ?, ?)", (user_id, referral_link, inviter_id, 0, 0))
 
-        # Сразу показываем приветствие и кнопку "Участвовать"
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton(text="🎉 Участвовать", callback_data="participate"))
         bot.send_message(message.chat.id, get_welcome_text(), parse_mode='HTML', reply_markup=markup)
@@ -191,9 +180,7 @@ def participate(call):
     else:
         bot.answer_callback_query(call.id, text='Ты уже участвуешь!', show_alert=True)
 
-# (Остальные функции: бонус, ссылка, профиль, рефералы, топ, меню, админ-команды)
-# ОНИ ОСТАЛИСЬ БЕЗ ИЗМЕНЕНИЙ, КАК В ПРЕДЫДУЩЕМ КОДЕ.
-
+# ОБНОВЛЕННЫЙ БОНУС С РАНДОМОМ
 @bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
 def daily_bonus(call):
     user_id = call.from_user.id
@@ -207,12 +194,33 @@ def daily_bonus(call):
     current_time = int(time.time())
     
     if current_time - last_time >= 86400:
-        execute_query("UPDATE users SET invites_count = invites_count + 1, last_bonus_time = ? WHERE telegram_id = ?", (current_time, user_id))
+        # Логика рандома: шансы 70% - 1, 20% - 2, 9% - 3, 1% - 5
+        rand_val = random.random()
+        if rand_val < 0.70:
+            bonus_points = 1
+        elif rand_val < 0.90:
+            bonus_points = 2
+        elif rand_val < 0.99:
+            bonus_points = 3
+        else:
+            bonus_points = 5
+
+        execute_query("UPDATE users SET invites_count = invites_count + ?, last_bonus_time = ? WHERE telegram_id = ?", (bonus_points, current_time, user_id))
         
         now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (user_id, 1, "Ежедневный бонус", now_str))
+        execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (user_id, bonus_points, "Ежедневный бонус", now_str))
         
-        bot.answer_callback_query(call.id, text="🎁 Бонус получен! Тебе начислено 1 очко.", show_alert=True)
+        # Формируем сообщение в зависимости от выпавшего числа
+        if bonus_points == 1:
+            msg = "🎁 Бонус получен! Тебе начислено 1 очко."
+        elif bonus_points == 2:
+            msg = "🎁 Ого! Бонус получен! Тебе начислено 2 очка."
+        elif bonus_points == 3:
+            msg = "🔥 Крупный улов! Бонус получен! Тебе начислено 3 очка!"
+        else:
+            msg = "💥 ДЖЕКПОТ! Тебе выпало 5 очков! 🎉"
+            
+        bot.answer_callback_query(call.id, text=msg, show_alert=True)
     else:
         remaining_seconds = 86400 - (current_time - last_time)
         hours = remaining_seconds // 3600
@@ -228,16 +236,13 @@ def show_link(call):
         return
         
     invite_link = f"https://t.me/{BOT_USERNAME}?start={data[0]}"
-    
     text = (
         f"🔗 <b>Твоя реферальная ссылка:</b>\n\n"
         f"<code>{invite_link}</code>\n\n"
         f"Нажми на ссылку, чтобы скопировать её, и отправляй друзьям!"
     )
-    
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu"))
-    
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                           text=text, parse_mode='HTML', reply_markup=markup, disable_web_page_preview=True)
 
@@ -255,13 +260,11 @@ def show_my_referrals(call):
             name = f"@{inv_username}" if inv_username != "Нет юзернейма" else f"ID:{inv_id}"
             date_only = join_time.split()[0] 
             text += f"{i}. {name} ({date_only})\n"
-            
         if len(history) > 20:
             text += f"\n...и еще {len(history) - 20} чел."
 
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu"))
-    
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                           text=text, parse_mode='HTML', reply_markup=markup)
 
@@ -272,12 +275,9 @@ def show_profile(call):
     if not data:
         bot.answer_callback_query(call.id, text="❌ Ты не найден в базе. Напиши /start", show_alert=True)
         return
-        
     invites, last_bonus = data
-    
     rank_data = execute_query("SELECT COUNT(*) FROM users WHERE invites_count > ?", (invites,)).fetchone()
     rank = rank_data[0] + 1 if invites > 0 else "—"
-    
     current_time = int(time.time())
     if current_time - last_bonus >= 86400:
         bonus_status = "Доступен! 🎁"
@@ -292,10 +292,8 @@ def show_profile(call):
         f"🎁 <b>Ежедневный бонус:</b> {bonus_status}\n\n"
         f"Чтобы получить ссылку, нажми кнопку «Моя ссылка»."
     )
-    
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu"))
-    
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                           text=profile_text, parse_mode='HTML', reply_markup=markup)
 
@@ -314,7 +312,6 @@ def show_top(call):
                 username = f"@{chat.username}" if chat.username else f"ID:{uid}"
             except:
                 username = f"ID:{uid}"
-                
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
             text += f"{medal} {username} — {invites} очк.\n"
             
@@ -329,7 +326,6 @@ def show_top(call):
 
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu"))
-    
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                           text=text, parse_mode='HTML', reply_markup=markup)
 
