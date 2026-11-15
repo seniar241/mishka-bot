@@ -38,7 +38,8 @@ def init_db():
             inviter INTEGER,
             invites_count INTEGER DEFAULT 0,
             particip INTEGER DEFAULT 0,
-            last_bonus_time INTEGER DEFAULT 0
+            last_bonus_time INTEGER DEFAULT 0,
+            last_task_time INTEGER DEFAULT 0
         )
     """)
     execute_query("""
@@ -62,6 +63,17 @@ def init_db():
 
 init_db()
 
+# Функция для получения уровня
+def get_level(points):
+    if points < 5:
+        return "🥉 Новичок", 5
+    elif points < 15:
+        return "🥈 Охотник", 15
+    elif points < 30:
+        return "🥇 Гроза Мишек", 30
+    else:
+        return "👑 Легенда", 999999 # Максимальный уровень
+
 def check_subscriptions(user_id):
     for channel in REQUIRED_CHANNELS:
         if not is_subscribed(user_id, channel):
@@ -82,10 +94,11 @@ def get_main_menu():
     btn_link = InlineKeyboardButton("🔗 Моя ссылка", callback_data="show_link")
     btn_bonus = InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="daily_bonus")
     btn_refs = InlineKeyboardButton("👥 Мои рефералы", callback_data="my_referrals")
+    btn_task = InlineKeyboardButton("📜 Задание дня", callback_data="daily_task") # НОВАЯ КНОПКА
     
     markup.add(btn_top, btn_profile)
     markup.add(btn_link, btn_bonus)
-    markup.add(btn_refs)
+    markup.add(btn_refs, btn_task)
     return markup
 
 def get_welcome_text():
@@ -95,8 +108,9 @@ def get_welcome_text():
         f'<b>Как это работает:</b>\n'
         f'1️⃣ Приглашай друзей по своей личной ссылке.\n'
         f'2️⃣ Получай <b>1 очко</b> за каждого, кто зайдёт.\n'
-        f'3️⃣ Заходи каждый день и забирай <b>ежедневный бонус</b> (может выпасть до 5 очков!).\n'
-        f'4️⃣ Кто наберёт больше всех очков — тот и уносит мишку! 🏆\n\n'
+        f'3️⃣ Заходи каждый день и забирай <b>ежедневный бонус</b> (до 5 очков!).\n'
+        f'4️⃣ Выполняй <b>задание дня</b> в нашем чате.\n'
+        f'5️⃣ Кто наберёт больше всех очков — тот и уносит мишку! 🏆\n\n'
         f'⚠️ <b>Внимание!</b> Чтобы начать, тебе нужно подписаться на группу:\n'
         f'🔗 <a href="https://t.me/aaxf566">@aaxf566</a>\n\n'
         f'✨ После подписки жми кнопку ниже.'
@@ -144,7 +158,7 @@ def start(message):
                 except:
                     pass
 
-        execute_query("INSERT INTO users (telegram_id, referral_code, inviter, invites_count, last_bonus_time) VALUES (?, ?, ?, ?, ?)", (user_id, referral_link, inviter_id, 0, 0))
+        execute_query("INSERT INTO users (telegram_id, referral_code, inviter, invites_count, last_bonus_time, last_task_time) VALUES (?, ?, ?, ?, ?, ?)", (user_id, referral_link, inviter_id, 0, 0, 0))
 
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton(text="🎉 Участвовать", callback_data="participate"))
@@ -180,6 +194,73 @@ def participate(call):
     else:
         bot.answer_callback_query(call.id, text='Ты уже участвуешь!', show_alert=True)
 
+# НОВАЯ ФУНКЦИЯ: Задание дня
+@bot.callback_query_handler(func=lambda call: call.data == "daily_task")
+def daily_task(call):
+    user_id = call.from_user.id
+    data = execute_query("SELECT last_task_time FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+    
+    if not data:
+        bot.answer_callback_query(call.id, text="❌ Напиши /start", show_alert=True)
+        return
+        
+    last_time = data[0]
+    current_time = int(time.time())
+    
+    # Задание доступно раз в 24 часа
+    if current_time - last_time >= 86400:
+        execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (current_time, user_id))
+        
+        # Генерируем слово для задания (можно менять)
+        words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
+        task_word = random.choice(words)
+        
+        text = (
+            f"📜 <b>Твоё задание на сегодня:</b>\n\n"
+            f"Напиши в нашем чате слово: <code>{task_word}</code>\n\n"
+            f"После этого бот автоматически начислит тебе <b>1 очко</b>! (Не забудь подписаться на чат)."
+        )
+        bot.answer_callback_query(call.id, text="Задание выдано! Проверь сообщение.", show_alert=True)
+        bot.send_message(call.message.chat.id, text, parse_mode='HTML')
+    else:
+        remaining_seconds = 86400 - (current_time - last_time)
+        hours = remaining_seconds // 3600
+        minutes = (remaining_seconds % 3600) // 60
+        bot.answer_callback_query(call.id, text=f"⏳ Новое задание будет через {hours} ч. {minutes} мин.", show_alert=True)
+
+# Обработчик сообщений в чате (для выполнения задания)
+@bot.message_handler(func=lambda message: True)
+def check_task_word(message):
+    if message.chat.type in ['group', 'supergroup']:
+        user_id = message.from_user.id
+        text = message.text.upper().strip()
+        
+        # Проверяем, есть ли пользователь в базе
+        user = execute_query("SELECT last_task_time FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        if not user:
+            return # Если нет в базе, игнорируем
+            
+        # Список слов (должен совпадать с тем, что в функции daily_task)
+        words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
+        
+        if text in words:
+            # Даем очко за слово
+            execute_query("UPDATE users SET invites_count = invites_count + 1 WHERE telegram_id = ?", (user_id,))
+            now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (user_id, 1, f"Задание дня: {text}", now_str))
+            
+            # Удаляем сообщение, чтобы не спамили
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+            except:
+                pass
+                
+            # Отправляем уведомление
+            bot.send_message(message.chat.id, f"✅ @{message.from_user.username}, задание выполнено! Тебе начислено 1 очко за слово {text}.")
+            
+            # Обнуляем таймер задания (чтобы нельзя было спамить)
+            execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (int(time.time()), user_id))
+
 # ОБНОВЛЕННЫЙ БОНУС С РАНДОМОМ
 @bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
 def daily_bonus(call):
@@ -194,7 +275,6 @@ def daily_bonus(call):
     current_time = int(time.time())
     
     if current_time - last_time >= 86400:
-        # Логика рандома: шансы 70% - 1, 20% - 2, 9% - 3, 1% - 5
         rand_val = random.random()
         if rand_val < 0.70:
             bonus_points = 1
@@ -210,7 +290,6 @@ def daily_bonus(call):
         now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (user_id, bonus_points, "Ежедневный бонус", now_str))
         
-        # Формируем сообщение в зависимости от выпавшего числа
         if bonus_points == 1:
             msg = "🎁 Бонус получен! Тебе начислено 1 очко."
         elif bonus_points == 2:
@@ -268,6 +347,7 @@ def show_my_referrals(call):
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                           text=text, parse_mode='HTML', reply_markup=markup)
 
+# ОБНОВЛЕННЫЙ ПРОФИЛЬ (с уровнями)
 @bot.callback_query_handler(func=lambda call: call.data == "show_profile")
 def show_profile(call):
     user_id = call.from_user.id
@@ -275,9 +355,13 @@ def show_profile(call):
     if not data:
         bot.answer_callback_query(call.id, text="❌ Ты не найден в базе. Напиши /start", show_alert=True)
         return
+        
     invites, last_bonus = data
+    level_name, next_level_pts = get_level(invites)
+    
     rank_data = execute_query("SELECT COUNT(*) FROM users WHERE invites_count > ?", (invites,)).fetchone()
     rank = rank_data[0] + 1 if invites > 0 else "—"
+    
     current_time = int(time.time())
     if current_time - last_bonus >= 86400:
         bonus_status = "Доступен! 🎁"
@@ -287,11 +371,20 @@ def show_profile(call):
 
     profile_text = (
         f"👤 <b>Твой профиль</b>\n\n"
-        f"🐻 <b>Очки:</b> {invites}\n"
-        f"🏆 <b>Место в топе:</b> {rank}\n"
+        f"🎖 <b>Уровень:</b> {level_name}\n"
+        f"🐻 <b>Очки:</b> {invites}"
+    )
+    
+    # Если до следующего уровня не 999999 (т.е. не легенда)
+    if next_level_pts != 999999:
+        profile_text += f" (до след. уровня: {next_level_pts - invites})"
+        
+    profile_text += (
+        f"\n🏆 <b>Место в топе:</b> {rank}\n"
         f"🎁 <b>Ежедневный бонус:</b> {bonus_status}\n\n"
         f"Чтобы получить ссылку, нажми кнопку «Моя ссылка»."
     )
+    
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu"))
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
@@ -335,6 +428,7 @@ def back_to_menu(call):
                           text=get_active_user_text(), parse_mode='HTML', reply_markup=get_main_menu())
 
 # ================= АДМИН-КОМАНДЫ =================
+# (Остались без изменений)
 
 @bot.message_handler(commands=['add_points'])
 def add_points(message):
@@ -534,14 +628,4 @@ def admin_help(message):
     /add_points [ID] [кол-во] - Начислить очки.
     /remove_points [ID] [кол-во] - Списать очки.
     /user_info [ID] - Инфо о юзере.
-    /check_user [ID] - История операций (рефки + ручные).
-    /set_winners [число] - Кол-во победителей.
-    /draw - Провести розыгрыш.
-    /participants - Показать общий топ.
-    /delete_user [ID] - Удалить юзера.
-    /reset_users - Очистить базу.
-    """
-    bot.send_message(message.chat.id, help_message)
-
-bot.remove_webhook()
-bot.polling(non_stop=True)
+    /check_user [ID] -
