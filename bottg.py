@@ -11,8 +11,8 @@ from datetime import datetime
 API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 bot = telebot.TeleBot(API_TOKEN, skip_pending=True)
 
-# Улучшенная проверка на админа (без учета регистра)
-ADMIN_USERNAMES = ['seniartys', '@seniartys', 'Seniartys', '@Seniartys'] 
+# Твой юзернейм (без @, но на всякий случай добавим варианты)
+ADMIN_USERNAMES = ['seniartys'] 
 REQUIRED_CHANNELS = ['@aaxf566'] 
 BOT_USERNAME = 'refkafchat_bot'
 MAX_WINNERS = 1
@@ -21,10 +21,8 @@ def is_admin(message):
     username = message.from_user.username
     if not username:
         return False
-    # Приводим к нижнему регистру и убираем @ для надежности
-    clean_username = username.lower().replace('@', '')
-    clean_admins = [admin.lower().replace('@', '') for admin in ADMIN_USERNAMES]
-    return clean_username in clean_admins
+    # Приводим к нижнему регистру для надежности
+    return username.lower() in [admin.lower() for admin in ADMIN_USERNAMES]
 
 def execute_query(query, parameters=()):
     with sqlite3.connect('database.db') as conn:
@@ -186,7 +184,6 @@ def participate(call):
     else:
         bot.answer_callback_query(call.id, text='Ты уже участвуешь!', show_alert=True)
 
-# ОБНОВЛЕННОЕ ЗАДАНИЕ ДНЯ
 @bot.callback_query_handler(func=lambda call: call.data == "daily_task")
 def daily_task(call):
     user_id = call.from_user.id
@@ -199,12 +196,24 @@ def daily_task(call):
     last_time = data[0]
     current_time = int(time.time())
     
-    # Проверяем, не выполнено ли уже сегодня
+    # Если задание уже выполнено (прошло меньше 24 часов)
     if current_time - last_time < 86400:
         remaining_seconds = 86400 - (current_time - last_time)
         hours = remaining_seconds // 3600
         minutes = (remaining_seconds % 3600) // 60
-        bot.answer_callback_query(call.id, text=f"✅ Ты уже выполнил задание! Новое будет через {hours} ч. {minutes} мин.", show_alert=True)
+        
+        # Удаляем предыдущее сообщение и шлем новое
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+            
+        text = (
+            f"✅ <b>Задание выполнено!</b>\n\n"
+            f"Ты уже получил очко за сегодня.\n"
+            f"Новое задание будет через <b>{hours} ч. {minutes} мин.</b>"
+        )
+        bot.send_message(call.message.chat.id, text, parse_mode='HTML', reply_markup=get_main_menu())
         return
         
     # Если не выполнено - выдаем
@@ -213,14 +222,18 @@ def daily_task(call):
     words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
     task_word = random.choice(words)
     
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+        
     text = (
         f"📜 <b>Твоё задание на сегодня:</b>\n\n"
         f"Перейди в наш чат: <a href='https://t.me/aaxf566'>@aaxf566</a>\n"
         f"И напиши там слово: <code>{task_word}</code>\n\n"
         f"После этого бот автоматически начислит тебе <b>1 очко</b>!"
     )
-    bot.answer_callback_query(call.id, text="Задание выдано! Проверь сообщение.", show_alert=True)
-    bot.send_message(call.message.chat.id, text, parse_mode='HTML')
+    bot.send_message(call.message.chat.id, text, parse_mode='HTML', reply_markup=get_main_menu())
 
 @bot.message_handler(func=lambda message: True)
 def check_task_word(message):
@@ -410,8 +423,8 @@ def back_to_menu(call):
 
 @bot.message_handler(commands=['add_points'])
 def add_points(message):
-    if not is_admin(message):
-        bot.send_message(message.chat.id, "❌ У тебя нет прав для этой команды.")
+    if not is_admin(message): 
+        bot.send_message(message.chat.id, f"❌ У тебя нет прав. Твой юзернейм: @{message.from_user.username}")
         return
     try:
         args = message.text.split()
@@ -598,7 +611,9 @@ def show_participants(message):
 
 @bot.message_handler(commands=['help_adm'])
 def admin_help(message):
-    if not is_admin(message): return
+    if not is_admin(message): 
+        bot.send_message(message.chat.id, f"❌ У тебя нет прав. Твой юзернейм: @{message.from_user.username}")
+        return
     help_message = """
     Админ-команды:
     /add_points [ID] [кол-во] - Начислить очки.
