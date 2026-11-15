@@ -38,7 +38,8 @@ def init_db():
             invites_count INTEGER DEFAULT 0,
             particip INTEGER DEFAULT 0,
             last_bonus_time INTEGER DEFAULT 0,
-            last_task_time INTEGER DEFAULT 0
+            last_task_time INTEGER DEFAULT 0,
+            task_completed INTEGER DEFAULT 0
         )
     """)
     execute_query("""
@@ -182,16 +183,17 @@ def participate(call):
     else:
         bot.answer_callback_query(call.id, text='Ты уже участвуешь!', show_alert=True)
 
+# ОБНОВЛЕННАЯ КНОПКА ЗАДАНИЯ
 @bot.callback_query_handler(func=lambda call: call.data == "daily_task")
 def daily_task(call):
     user_id = call.from_user.id
-    data = execute_query("SELECT last_task_time FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+    data = execute_query("SELECT last_task_time, task_completed FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
     
     if not data:
         bot.answer_callback_query(call.id, text="❌ Напиши /start", show_alert=True)
         return
         
-    last_time = data[0]
+    last_time, task_completed = data
     current_time = int(time.time())
     
     try:
@@ -199,6 +201,22 @@ def daily_task(call):
     except:
         pass
 
+    # Если бот записал, что задание выполнено в чате (task_completed == 1)
+    if task_completed == 1:
+        # Начисляем очко
+        execute_query("UPDATE users SET invites_count = invites_count + 1, task_completed = 0, last_task_time = ? WHERE telegram_id = ?", (current_time, user_id))
+        now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (user_id, 1, "Выполнение задания дня", now_str))
+        
+        text = (
+            f"🎉 <b>Награда получена!</b>\n\n"
+            f"Ты выполнил задание и получил <b>1 очко</b>.\n"
+            f"Возвращайся завтра за новым заданием!"
+        )
+        bot.send_message(call.message.chat.id, text, parse_mode='HTML', reply_markup=get_main_menu())
+        return
+
+    # Если задание уже было выполнено и награда получена (прошло меньше 24 часов)
     if current_time - last_time < 86400:
         remaining_seconds = 86400 - (current_time - last_time)
         hours = remaining_seconds // 3600
@@ -212,6 +230,7 @@ def daily_task(call):
         bot.send_message(call.message.chat.id, text, parse_mode='HTML', reply_markup=get_main_menu())
         return
         
+    # Если задания нет - выдаем новое
     words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
     task_word = random.choice(words)
         
@@ -219,11 +238,11 @@ def daily_task(call):
         f"📜 <b>Твоё задание на сегодня:</b>\n\n"
         f"Перейди в наш чат: <a href='https://t.me/aaxf566'>@aaxf566</a>\n"
         f"И напиши там слово: <code>{task_word}</code>\n\n"
-        f"После этого бот автоматически начислит тебе <b>1 очко</b>!"
+        f"После этого возвращайся сюда и жми кнопку, чтобы забрать награду!"
     )
     bot.send_message(call.message.chat.id, text, parse_mode='HTML', reply_markup=get_main_menu())
 
-# ОБРАБОТЧИК ЧАТА (теперь корректный)
+# ОБРАБОТЧИК ЧАТА
 @bot.message_handler(func=lambda message: True)
 def check_task_word(message):
     if message.chat.type in ['group', 'supergroup']:
@@ -233,38 +252,33 @@ def check_task_word(message):
             
         text = message.text.upper().strip()
         
-        user_data = execute_query("SELECT last_task_time FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        user_data = execute_query("SELECT last_task_time, task_completed FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         if not user_data:
             return 
             
-        last_task_time = user_data[0]
+        last_task_time, task_completed = user_data
         current_time = int(time.time())
             
         words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
         
         if text in words:
-            # Если прошло меньше 24 часов, просто удаляем и выходим
-            if current_time - last_task_time < 86400:
+            # Если он уже получал награду сегодня
+            if current_time - last_task_time < 86400 and task_completed == 0:
                 try:
                     bot.delete_message(message.chat.id, message.message_id)
                 except:
                     pass
                 return
 
-            # Если прошло больше - начисляем очко
-            execute_query("UPDATE users SET invites_count = invites_count + 1 WHERE telegram_id = ?", (user_id,))
-            now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-            execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (user_id, 1, f"Задание дня: {text}", now_str))
+            # Если слово правильное и награда еще не получена
+            execute_query("UPDATE users SET task_completed = 1 WHERE telegram_id = ?", (user_id,))
             
             try:
                 bot.delete_message(message.chat.id, message.message_id)
             except:
                 pass
                 
-            bot.send_message(message.chat.id, f"✅ @{message.from_user.username}, задание выполнено! Тебе начислено 1 очко за слово {text}.")
-            
-            # Записываем время выполнения ТОЛЬКО ЗДЕСЬ
-            execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (current_time, user_id))
+            bot.send_message(message.chat.id, f"✅ @{message.from_user.username}, задание выполнено! Перейди в бота и нажми «Задание дня», чтобы забрать награду.")
 
 @bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
 def daily_bonus(call):
