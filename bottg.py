@@ -628,4 +628,14 @@ def admin_help(message):
     /add_points [ID] [кол-во] - Начислить очки.
     /remove_points [ID] [кол-во] - Списать очки.
     /user_info [ID] - Инфо о юзере.
-    /check_user [ID] -
+    /check_user [ID] - История операций (рефки + ручные).
+    /set_winners [число] - Кол-во победителей.
+    /draw - Провести розыгрыш.
+    /participants - Показать общий топ.
+    /delete_user [ID] - Удалить юзера.
+    /reset_users - Очистить базу.
+    """
+    bot.send_message(message.chat.id, help_message)
+
+bot.remove_webhook()
+bot.polling(non_stop=True)
