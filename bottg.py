@@ -11,7 +11,7 @@ from datetime import datetime
 API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 bot = telebot.TeleBot(API_TOKEN, skip_pending=True)
 
-ADMIN_USERNAMES = ['seniartys'] 
+ADMIN_IDS = [1638663913] 
 REQUIRED_CHANNELS = ['@aaxf566'] 
 BOT_USERNAME = 'refkafchat_bot'
 MAX_WINNERS = 1
