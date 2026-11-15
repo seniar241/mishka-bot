@@ -11,16 +11,14 @@ from datetime import datetime
 API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 bot = telebot.TeleBot(API_TOKEN, skip_pending=True)
 
+# ТВОЙ ID АДМИНА (уже вписан)
 ADMIN_IDS = [1638663913] 
 REQUIRED_CHANNELS = ['@aaxf566'] 
 BOT_USERNAME = 'refkafchat_bot'
 MAX_WINNERS = 1
 
 def is_admin(message):
-    username = message.from_user.username
-    if not username:
-        return False
-    return username.lower() in [admin.lower() for admin in ADMIN_USERNAMES]
+    return message.from_user.id in ADMIN_IDS
 
 def execute_query(query, parameters=()):
     with sqlite3.connect('database.db') as conn:
@@ -608,7 +606,7 @@ def show_participants(message):
 @bot.message_handler(commands=['help_adm'])
 def admin_help(message):
     if not is_admin(message): 
-        bot.send_message(message.chat.id, f"❌ У тебя нет прав. Твой юзернейм: @{message.from_user.username}")
+        bot.send_message(message.chat.id, f"❌ У тебя нет прав. Твой ID: {message.from_user.id}")
         return
     help_message = """
     Админ-команды:
