@@ -11,14 +11,20 @@ from datetime import datetime
 API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 bot = telebot.TeleBot(API_TOKEN, skip_pending=True)
 
-ADMIN_USERNAMES = ['seniartys']
-REQUIRED_CHANNELS = ['@aaxf566'] # СЮДА ВПИШИ СВОИ КАНАЛЫ
+# Улучшенная проверка на админа (без учета регистра)
+ADMIN_USERNAMES = ['seniartys', '@seniartys', 'Seniartys', '@Seniartys'] 
+REQUIRED_CHANNELS = ['@aaxf566'] 
 BOT_USERNAME = 'refkafchat_bot'
 MAX_WINNERS = 1
 
 def is_admin(message):
     username = message.from_user.username
-    return username and username in ADMIN_USERNAMES
+    if not username:
+        return False
+    # Приводим к нижнему регистру и убираем @ для надежности
+    clean_username = username.lower().replace('@', '')
+    clean_admins = [admin.lower().replace('@', '') for admin in ADMIN_USERNAMES]
+    return clean_username in clean_admins
 
 def execute_query(query, parameters=()):
     with sqlite3.connect('database.db') as conn:
@@ -180,6 +186,7 @@ def participate(call):
     else:
         bot.answer_callback_query(call.id, text='Ты уже участвуешь!', show_alert=True)
 
+# ОБНОВЛЕННОЕ ЗАДАНИЕ ДНЯ
 @bot.callback_query_handler(func=lambda call: call.data == "daily_task")
 def daily_task(call):
     user_id = call.from_user.id
@@ -192,25 +199,28 @@ def daily_task(call):
     last_time = data[0]
     current_time = int(time.time())
     
-    if current_time - last_time >= 86400:
-        execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (current_time, user_id))
-        
-        words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
-        task_word = random.choice(words)
-        
-        text = (
-            f"📜 <b>Твоё задание на сегодня:</b>\n\n"
-            f"Перейди в наш чат: <a href='https://t.me/aaxf566'>@aaxf566</a>\n"
-            f"И напиши там слово: <code>{task_word}</code>\n\n"
-            f"После этого бот автоматически начислит тебе <b>1 очко</b>!"
-        )
-        bot.answer_callback_query(call.id, text="Задание выдано! Проверь сообщение.", show_alert=True)
-        bot.send_message(call.message.chat.id, text, parse_mode='HTML')
-    else:
+    # Проверяем, не выполнено ли уже сегодня
+    if current_time - last_time < 86400:
         remaining_seconds = 86400 - (current_time - last_time)
         hours = remaining_seconds // 3600
         minutes = (remaining_seconds % 3600) // 60
-        bot.answer_callback_query(call.id, text=f"⏳ Новое задание будет через {hours} ч. {minutes} мин.", show_alert=True)
+        bot.answer_callback_query(call.id, text=f"✅ Ты уже выполнил задание! Новое будет через {hours} ч. {minutes} мин.", show_alert=True)
+        return
+        
+    # Если не выполнено - выдаем
+    execute_query("UPDATE users SET last_task_time = ? WHERE telegram_id = ?", (current_time, user_id))
+    
+    words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
+    task_word = random.choice(words)
+    
+    text = (
+        f"📜 <b>Твоё задание на сегодня:</b>\n\n"
+        f"Перейди в наш чат: <a href='https://t.me/aaxf566'>@aaxf566</a>\n"
+        f"И напиши там слово: <code>{task_word}</code>\n\n"
+        f"После этого бот автоматически начислит тебе <b>1 очко</b>!"
+    )
+    bot.answer_callback_query(call.id, text="Задание выдано! Проверь сообщение.", show_alert=True)
+    bot.send_message(call.message.chat.id, text, parse_mode='HTML')
 
 @bot.message_handler(func=lambda message: True)
 def check_task_word(message):
@@ -400,7 +410,9 @@ def back_to_menu(call):
 
 @bot.message_handler(commands=['add_points'])
 def add_points(message):
-    if not is_admin(message): return
+    if not is_admin(message):
+        bot.send_message(message.chat.id, "❌ У тебя нет прав для этой команды.")
+        return
     try:
         args = message.text.split()
         target_id = int(args[1])
