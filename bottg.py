@@ -8,18 +8,7 @@ import time
 import random
 from datetime import datetime
 
-def generate_captcha():
-    operators = ['+', '-', '*', '/']
-    num1 = random.randint(1, 10)
-    num2 = random.randint(1, 10)
-    operator = random.choice(operators)
-    if operator == '/':
-        num1 = num1 * num2
-    captcha = f"{num1} {operator} {num2}"
-    answer = eval(captcha)
-    return captcha, int(answer)
-
-# Если ты запускаешь на Railway, эта строка не нужна, но пусть будет для локального теста
+# Если ты запускаешь на Railway, эта строка не нужна
 # load_dotenv(dotenv_path='config.env')
 
 API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
@@ -30,8 +19,6 @@ ADMIN_USERNAMES = ['seniartys']
 REQUIRED_CHANNELS = ['@aaxf566'] 
 BOT_USERNAME = 'refkafchat_bot'
 MAX_WINNERS = 1
-
-user_cache = {}
 
 def is_admin(message):
     username = message.from_user.username
@@ -95,11 +82,11 @@ def get_main_menu():
     btn_profile = InlineKeyboardButton("👤 Мой профиль", callback_data="show_profile")
     btn_link = InlineKeyboardButton("🔗 Моя ссылка", callback_data="show_link")
     btn_bonus = InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="daily_bonus")
-    btn_refs = InlineKeyboardButton("👥 Мои рефералы", callback_data="my_referrals") # НОВАЯ КНОПКА
+    btn_refs = InlineKeyboardButton("👥 Мои рефералы", callback_data="my_referrals")
     
     markup.add(btn_top, btn_profile)
     markup.add(btn_link, btn_bonus)
-    markup.add(btn_refs) # Добавляем ее отдельным рядом
+    markup.add(btn_refs)
     return markup
 
 def get_welcome_text():
@@ -128,6 +115,7 @@ def start(message):
     user_id = message.from_user.id
     user_data = execute_query("SELECT particip FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
 
+    # Если пользователь уже есть в базе
     if user_data:
         if user_data[0] == 1: 
             bot.send_message(message.chat.id, get_active_user_text(), parse_mode='HTML', reply_markup=get_main_menu())
@@ -135,56 +123,43 @@ def start(message):
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton(text="🎉 Участвовать", callback_data="participate"))
             bot.send_message(message.chat.id, get_welcome_text(), parse_mode='HTML', reply_markup=markup)
+    
+    # Если это новый пользователь
     else:
-        captcha_question, captcha_answer = generate_captcha()
-        user_cache[user_id] = {"captcha_answer": captcha_answer, "message": message}
-        bot.send_message(message.chat.id, f"Чтобы доказать, что ты не робот, реши пример: {captcha_question} = ?\nВведи ответ числом:")
+        args = message.text.split()
+        referral_link = f'{user_id}'
+        inviter_id = None
 
-@bot.message_handler(func=lambda msg: msg.from_user.id in user_cache)
-def captcha_check(msg):
-    user_id = msg.from_user.id
-    original_message = user_cache[user_id]["message"]
-    try:
-        user_answer = int(msg.text)
-        if user_answer == user_cache[user_id]["captcha_answer"]:
-            bot.send_message(msg.chat.id, "✅ Капча пройдена!")
-            del user_cache[user_id]
-            
-            args = original_message.text.split()
-            referral_link = f'{user_id}'
+        # Обработка реферальной ссылки
+        if len(args) > 1:
+            ref_code = args[1]
+            inviter = execute_query("SELECT telegram_id FROM users WHERE referral_code = ?", (ref_code,)).fetchone()
+            if inviter:
+                inviter_id = inviter[0]
+                execute_query("UPDATE users SET invites_count = invites_count + 1 WHERE telegram_id = ?", (inviter_id,))
+                
+                now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+                invited_username = message.from_user.username or "Нет юзернейма"
+                
+                # Запись в историю рефералов
+                execute_query("INSERT INTO referral_history (inviter_id, invited_id, invited_username, join_time) VALUES (?, ?, ?, ?)", (inviter_id, user_id, invited_username, now_str))
+                
+                # Запись в историю очков
+                reason_text = f"Реферал @{invited_username} (ID: {user_id})"
+                execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (inviter_id, 1, reason_text, now_str))
+                
+                try:
+                    bot.send_message(inviter_id, f"🎉 Тебе засчитано очко! Кто-то зашел по твоей ссылке.")
+                except:
+                    pass
 
-            if len(args) > 1:
-                ref_code = args[1]
-                inviter = execute_query("SELECT telegram_id FROM users WHERE referral_code = ?", (ref_code,)).fetchone()
-                if inviter:
-                    inviter_id = inviter[0]
-                    execute_query("UPDATE users SET invites_count = invites_count + 1 WHERE telegram_id = ?", (inviter_id,))
-                    now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-                    invited_username = msg.from_user.username or "Нет юзернейма"
-                    
-                    execute_query("INSERT INTO users (telegram_id, referral_code, inviter, invites_count, last_bonus_time) VALUES (?, ?, ?, ?, ?)", (user_id, referral_link, inviter_id, 0, 0))
-                    execute_query("INSERT INTO referral_history (inviter_id, invited_id, invited_username, join_time) VALUES (?, ?, ?, ?)", (inviter_id, user_id, invited_username, now_str))
-                    
-                    reason_text = f"Реферал @{invited_username} (ID: {user_id})"
-                    execute_query("INSERT INTO points_history (user_id, amount, reason, action_time) VALUES (?, ?, ?, ?)", (inviter_id, 1, reason_text, now_str))
-                    
-                    try:
-                        bot.send_message(inviter_id, f"🎉 Тебе засчитано очко! Кто-то зашел по твоей ссылке.")
-                    except:
-                        pass
-                else:
-                    bot.send_message(msg.chat.id, "❌ Неверная ссылка.")
-                    return
-            else:
-                execute_query("INSERT INTO users (telegram_id, referral_code, inviter, invites_count, last_bonus_time) VALUES (?, ?, ?, ?, ?)", (user_id, referral_link, None, 0, 0))
+        # Регистрируем нового пользователя
+        execute_query("INSERT INTO users (telegram_id, referral_code, inviter, invites_count, last_bonus_time) VALUES (?, ?, ?, ?, ?)", (user_id, referral_link, inviter_id, 0, 0))
 
-            markup = InlineKeyboardMarkup()
-            markup.add(InlineKeyboardButton(text="🎉 Участвовать", callback_data="participate"))
-            bot.send_message(msg.chat.id, get_welcome_text(), parse_mode='HTML', reply_markup=markup)
-        else:
-            bot.send_message(msg.chat.id, "❌ Неверный ответ. Попробуй еще раз.")
-    except ValueError:
-        bot.send_message(msg.chat.id, "❌ Введи число!")
+        # Сразу показываем приветствие и кнопку "Участвовать"
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton(text="🎉 Участвовать", callback_data="participate"))
+        bot.send_message(message.chat.id, get_welcome_text(), parse_mode='HTML', reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "participate")
 def participate(call):
@@ -215,6 +190,9 @@ def participate(call):
         bot.answer_callback_query(call.id, text='🎉 Ты в игре!', show_alert=True)
     else:
         bot.answer_callback_query(call.id, text='Ты уже участвуешь!', show_alert=True)
+
+# (Остальные функции: бонус, ссылка, профиль, рефералы, топ, меню, админ-команды)
+# ОНИ ОСТАЛИСЬ БЕЗ ИЗМЕНЕНИЙ, КАК В ПРЕДЫДУЩЕМ КОДЕ.
 
 @bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
 def daily_bonus(call):
@@ -263,21 +241,18 @@ def show_link(call):
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                           text=text, parse_mode='HTML', reply_markup=markup, disable_web_page_preview=True)
 
-# НОВЫЙ ОБРАБОТЧИК: Мои рефералы
 @bot.callback_query_handler(func=lambda call: call.data == "my_referrals")
 def show_my_referrals(call):
     user_id = call.from_user.id
-    # Берем историю заходов именно этого пользователя
     history = execute_query("SELECT invited_id, invited_username, join_time FROM referral_history WHERE inviter_id = ? ORDER BY id DESC", (user_id,)).fetchall()
     
     if not history:
         text = "👥 <b>Твои рефералы</b>\n\nПока никого нет. Кидай свою ссылку друзьям, и они появятся здесь!"
     else:
         text = f"👥 <b>Твои рефералы (всего {len(history)}):</b>\n\n"
-        for i, record in enumerate(history[:20], 1): # Показываем последние 20
+        for i, record in enumerate(history[:20], 1):
             inv_id, inv_username, join_time = record
             name = f"@{inv_username}" if inv_username != "Нет юзернейма" else f"ID:{inv_id}"
-            # Берем только дату без времени для красоты
             date_only = join_time.split()[0] 
             text += f"{i}. {name} ({date_only})\n"
             
@@ -324,7 +299,6 @@ def show_profile(call):
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                           text=profile_text, parse_mode='HTML', reply_markup=markup)
 
-# ОБНОВЛЕННЫЙ ТОП
 @bot.callback_query_handler(func=lambda call: call.data == "show_top")
 def show_top(call):
     user_id = call.from_user.id
@@ -344,12 +318,11 @@ def show_top(call):
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
             text += f"{medal} {username} — {invites} очк.\n"
             
-        # Добавляем мотивацию для тех, кто не в топ-3
         user_pts_data = execute_query("SELECT invites_count FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         if user_pts_data:
             user_pts = user_pts_data[0]
             if len(users) >= 3:
-                third_place_pts = users[2][1] # Очки того, кто на 3 месте
+                third_place_pts = users[2][1]
                 if user_pts < third_place_pts and uid != user_id:
                     diff = third_place_pts - user_pts
                     text += f"\n🔥 <b>До 3-го места тебе осталось всего {diff} очк.!</b>"
@@ -366,7 +339,6 @@ def back_to_menu(call):
                           text=get_active_user_text(), parse_mode='HTML', reply_markup=get_main_menu())
 
 # ================= АДМИН-КОМАНДЫ =================
-# (Они остались без изменений, я их не трогал, чтобы ты не запутался)
 
 @bot.message_handler(commands=['add_points'])
 def add_points(message):
