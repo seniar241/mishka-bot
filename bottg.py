@@ -198,10 +198,11 @@ def daily_task(call):
         words = ["МИШКА", "ТОП", "ПРИЗ", "ОХОТА", "ПОБЕДА", "БИТВА"]
         task_word = random.choice(words)
         
-        text = (
+                text = (
             f"📜 <b>Твоё задание на сегодня:</b>\n\n"
-            f"Напиши в нашем чате слово: <code>{task_word}</code>\n\n"
-            f"После этого бот автоматически начислит тебе <b>1 очко</b>! (Не забудь подписаться на чат)."
+            f"Перейди в наш чат: <a href='https://t.me/aaxf566'>@aaxf566</a>\n"
+            f"И напиши там слово: <code>{task_word}</code>\n\n"
+            f"После этого бот автоматически начислит тебе <b>1 очко</b>!"
         )
         bot.answer_callback_query(call.id, text="Задание выдано! Проверь сообщение.", show_alert=True)
         bot.send_message(call.message.chat.id, text, parse_mode='HTML')
